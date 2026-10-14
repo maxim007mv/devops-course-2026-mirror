@@ -1,7 +1,7 @@
 # Конфигурация виртуальной машины devops-vm
 
 > ПР №5 «Удалённый сервер и безопасный доступ. SSH, sudo, UFW, DNS». Документ — исходные данные для Ansible-роли (ПР №11).
-> Гипервизор: QEMU 10 (TCG — вложенная KVM на учебном хосте неработоспособна) вместо VirtualBox; адаптеры построены как аналоги NAT и Host-only VirtualBox.
+> Гипервизор: QEMU 10 на хостовой Linux-машине (режим TCG, т. к. аппаратное ускорение KVM на ней неработоспособно) вместо VirtualBox; адаптеры построены как аналоги NAT и Host-only VirtualBox.
 > Скрипты: `infra/devops-vm/hypervisor/` (запуск ВМ), `infra/devops-vm/setup/` (настройка гостя), `scripts/audit.sh` (контроль).
 
 ## 1. Параметры машины
@@ -13,7 +13,7 @@
 | ОЗУ | 2048 МБ |
 | vCPU | 2 |
 | Диск | 25 ГБ, qcow2 (динамически расширяемый), virtio |
-| Запуск | `sudo infra/devops-vm/hypervisor/hostonly-up.sh && sudo infra/devops-vm/hypervisor/start-vm.sh` |
+| Запуск | `sudo ./hostonly-up.sh && sudo ./start-vm.sh` (из каталога с диском ВМ, скрипты — `infra/devops-vm/hypervisor/`) |
 
 ## 2. Сетевые интерфейсы
 
@@ -52,7 +52,7 @@ QEMU: `-netdev user,id=nat,hostfwd=tcp:127.0.0.1:2222-:2222`. Изменение
 * Файл: `/etc/ssh/sshd_config.d/99-hardening.conf` (копия — `infra/devops-vm/sshd/99-hardening.conf`); основной `sshd_config` не изменялся, резервная копия `/etc/ssh/sshd_config.backup`.
 * Директивы: `Port 2222`, `PermitRootLogin no`, `PasswordAuthentication no`, `PubkeyAuthentication yes`, `PermitEmptyPasswords no`, `MaxAuthTries 3`, `LoginGraceTime 30`, `AllowUsers devops`, `X11Forwarding no`, `ClientAliveInterval 300`, `ClientAliveCountMax 2`.
 * В `/etc/ssh/sshd_config.d/50-cloud-init.conf` (права 600, читать через sudo) строка `PasswordAuthentication yes` закомментирована — иначе она побеждает (первое значение).
-* `ssh.socket` отключён (`systemctl disable --now ssh.socket`), `ssh.service` включён; после рестарта завершить старый listener на порту 22, если остался (`ps -C sshd -o pid,cmd`).
+* `ssh.socket` отключён (`systemctl disable --now ssh.socket`), `ssh.service` включён и перезапущен (`systemctl restart ssh`); убедиться, что порт 22 больше не прослушивается (`ss -tlnp`, `ps -C sshd -o pid,cmd`) — без перезапуска остаётся старый процесс со старой конфигурацией.
 * Порядок: `sudo sshd -t` → `sudo systemctl restart ssh` → проверка во втором терминале, текущая сессия не закрывается.
 * Проверка: `sudo sshd -T | grep -Ei '^(port|permitrootlogin|passwordauthentication|maxauthtries|allowusers) '`, `sudo ss -tlnp | grep sshd` → `0.0.0.0:2222`.
 * Автоматизация: `sudo infra/devops-vm/setup/02-ssh-hardening.sh`.
@@ -77,9 +77,9 @@ QEMU: `-netdev user,id=nat,hostfwd=tcp:127.0.0.1:2222-:2222`. Изменение
 
 | Наименование | Момент создания (MSK) | Состояние |
 |---|---|---|
-| `01-clean-install` | 14.10.2026 08:19 | после `apt upgrade`, ВМ выключена (`qemu-img snapshot -c`) |
-| `02-keys-configured` | 14.10.2026 08:27 | пользователь devops, ключ, `~/.ssh/config` (живой снимок `savevm`, с ОЗУ) |
-| `03-ssh-hardened` | 14.10.2026 08:33 | задание 2 выполнено (живой снимок `savevm`) |
+| `01-clean-install` | 14.10.2026 09:37 | после `apt upgrade`, ВМ выключена (`qemu-img snapshot -c`) |
+| `02-keys-configured` | 14.10.2026 09:44 | пользователь devops, ключ, `~/.ssh/config` (живой снимок `savevm`, с ОЗУ) |
+| `03-ssh-hardened` | 14.10.2026 09:50 | задание 2 выполнено (живой снимок `savevm`) |
 
 Откат: ВМ выключена — `qemu-img snapshot -a <имя> devops-vm.qcow2`; ВМ работает — `loadvm <имя>` в мониторе.
 

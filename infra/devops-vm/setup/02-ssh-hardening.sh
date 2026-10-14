@@ -15,5 +15,5 @@ sshd -T | grep -Ei "^(port|permitrootlogin|passwordauthentication|maxauthtries|a
 systemctl disable --now ssh.socket
 systemctl enable --now ssh.service
 systemctl restart ssh
-# процесс-listener, запущенный ранее через ssh.socket, может остаться на порту 22 со старой конфигурацией
+# проверить, что порт 22 больше не прослушивается (без restart остаётся процесс со старой конфигурацией)
 ss -tlnp | grep sshd
