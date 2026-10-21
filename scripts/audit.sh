@@ -35,5 +35,31 @@ check "Политика по умолчанию для входящих: deny" "
 echo "[3] Учётные записи"
 awk -F: '$3>=1000 && $3<65534 {printf "              %s (uid=%s)\n",$1,$3}' /etc/passwd
 
+
+# [4] Веб-сервер
+echo "[4] Веб-сервер"
+if systemctl is-active --quiet nginx; then
+  check "nginx активен" "active" "active"
+else
+  check "nginx активен" "active" "inactive"
+fi
+if nginx -t >/dev/null 2>&1; then
+  check "nginx -t успешен" "ok" "ok"
+else
+  check "nginx -t успешен" "ok" "fail"
+fi
+if [[ -f /etc/ssl/certs/devops.crt ]] && openssl x509 -in /etc/ssl/certs/devops.crt -checkend $((30*86400)) >/dev/null 2>&1; then
+  check "сертификат devops.crt ≥30 дней" "ok" "ok"
+else
+  check "сертификат devops.crt ≥30 дней" "ok" "fail"
+fi
+WW=$(find /var/www/devops-site -perm -o+w 2>/dev/null | head -1 || true)
+KEYMODE=$(stat -c '%a' /etc/ssl/private/devops.key 2>/dev/null || echo missing)
+if [[ -z "$WW" && "$KEYMODE" == "600" ]]; then
+  check "нет o+w в сайте и ключ 600" "ok" "ok"
+else
+  check "нет o+w в сайте и ключ 600" "ok" "fail"
+fi
+
 echo "Пройдено: $PASS, не пройдено: $FAIL"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

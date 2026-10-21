@@ -92,3 +92,41 @@ QEMU: `-netdev user,id=nat,hostfwd=tcp:127.0.0.1:2222-:2222`. Изменение
 ## 9. Контроль
 
 `bash scripts/audit.sh` на ВМ: код 0 — конфигурация корректна, 1 — есть нарушения.
+
+## 8. Веб-сервер
+
+### 8.1. Nginx и виртуальный хост
+
+* Пакет: `nginx` (`sudo apt install nginx`).
+* Конфиг сайта: `/etc/nginx/sites-available/devops-site` (symlink в `sites-enabled/`), эталон в репозитории: `infra/devops-vm/nginx/devops-site`.
+* `server_name devops.local`; корень `/var/www/devops-site` (владелец `devops:devops`).
+* Порт 80: `return 301 https://$host$request_uri;`.
+* Порт 443: `ssl_certificate /etc/ssl/certs/devops.crt`, `ssl_certificate_key /etc/ssl/private/devops.key`, `ssl_protocols TLSv1.2 TLSv1.3` (без HSTS).
+* Логи: `/var/log/nginx/devops-site.access.log`, `devops-site.error.log`.
+* Проверка: `sudo nginx -t && sudo systemctl reload nginx`.
+
+### 8.2. TLS (самоподписанный сертификат)
+
+```bash
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/devops.key -out /etc/ssl/certs/devops.crt \
+  -subj "/CN=devops.local" \
+  -addext "subjectAltName=DNS:devops.local" \
+  -addext "basicConstraints=critical,CA:FALSE" \
+  -addext "keyUsage=digitalSignature,keyEncipherment" \
+  -addext "extendedKeyUsage=serverAuth"
+sudo chmod 600 /etc/ssl/private/devops.key
+```
+
+На клиенте: `scp devops:/etc/ssl/certs/devops.crt ~/devops.crt`, затем `curl --cacert ~/devops.crt https://devops.local/`.
+
+Снимок ВМ после настройки: `04-nginx-https`.
+
+### 8.3. Деплой
+
+Скрипт `scripts/deploy.sh`: `rsync -avz --delete --chmod=D755,F644` каталога `site/` на `devops:/var/www/devops-site`, затем проверка `curl --cacert`. Требует чистого git working tree.
+
+```bash
+./scripts/deploy.sh --dry-run
+./scripts/deploy.sh
+```
