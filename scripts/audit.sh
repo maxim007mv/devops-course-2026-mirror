@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Аудит базовой конфигурации сервера devops-vm (ПР №5).
+# Аудит базовой конфигурации сервера devops-vm (ПР №5–7).
 # Код возврата: 0 — все проверки пройдены, 1 — есть нарушения (пригодно для CI, ПР №10).
 set -uo pipefail
 
@@ -60,6 +60,17 @@ if [[ -z "$WW" && "$KEYMODE" == "600" ]]; then
 else
   check "нет o+w в сайте и ключ 600" "ok" "fail"
 fi
+
+# [5] Контейнеризация
+echo "[5] Контейнеризация"
+APP_DIR="${APP_DIR:-$HOME/app}"
+check "Служба docker активна" "active" "$(systemctl is-active docker 2>/dev/null)"
+check "СУБД app-db-1 в состоянии healthy" "healthy" \
+      "$(docker inspect -f '{{.State.Health.Status}}' app-db-1 2>/dev/null || echo absent)"
+# порты 5000 и 5432 допускаются только на 127.0.0.1
+EXPOSED="$(ss -tlnH | awk '{print $4}' | grep -E ':(5000|5432)$' | grep -v '^127\.0\.0\.1:' | sort -u | paste -sd, -)"
+check "Порты 5000/5432 только на 127.0.0.1" "none" "${EXPOSED:-none}"
+check "Права файла $APP_DIR/.env равны 600" "600" "$(stat -c '%a' "$APP_DIR/.env" 2>/dev/null || echo missing)"
 
 echo "Пройдено: $PASS, не пройдено: $FAIL"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
