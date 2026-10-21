@@ -24,6 +24,12 @@
 
 Маршрут по умолчанию — только через `enp0s3` (для `enp0s8` в netplan `dhcp4-overrides: use-routes: false, use-dns: false`).
 
+### 2.1. Локальное имя и разрешение имён
+
+* Хост: `/etc/hosts` ← `192.168.56.101    devops.local` (`infra/devops-vm/client/hosts.fragment`).
+* Гость: `hostnamectl set-hostname devops-vm`; в `/etc/hosts` строка `127.0.1.1 devops-vm.devops.local devops-vm` (в cloud-образе её нет — добавить, `setup/04-hostname.sh`); `hostname -f` → `devops-vm.devops.local`.
+* Порядок: `nsswitch.conf: hosts: files dns` → `/etc/hosts` → systemd-resolved (127.0.0.53, кэш) → DNS 10.0.2.3 (DHCP NAT).
+
 ## 3. Правило проброса портов
 
 | Имя | Протокол | Адрес хоста | Порт хоста | Адрес гостя | Порт гостя |
@@ -77,21 +83,13 @@ QEMU: `-netdev user,id=nat,hostfwd=tcp:127.0.0.1:2222-:2222`. Изменение
 
 | Наименование | Момент создания (MSK) | Состояние |
 |---|---|---|
-| `01-clean-install` | 14.10.2026 09:37 | после `apt upgrade`, ВМ выключена (`qemu-img snapshot -c`) |
-| `02-keys-configured` | 14.10.2026 09:44 | пользователь devops, ключ, `~/.ssh/config` (живой снимок `savevm`, с ОЗУ) |
-| `03-ssh-hardened` | 14.10.2026 09:50 | задание 2 выполнено (живой снимок `savevm`) |
+| `01-clean-install` | 14.10.2026 08:19 | после `apt upgrade`, ВМ выключена (`qemu-img snapshot -c`) |
+| `02-keys-configured` | 21.10.2026 07:18 | пользователь devops, ключ, `~/.ssh/config` (живой снимок `savevm`, с ОЗУ; пересоздан после восстановления с 01) |
+| `03-ssh-hardened` | 21.10.2026 07:18 | SSH на 2222, UFW, FQDN (живой снимок `savevm`) |
+| `04-nginx-https` | 21.10.2026 07:26 | ПР6: Nginx, TLS, редирект 301 |
+| `05-docker-compose` | 21.10.2026 09:58 | ПР7: Docker Engine, проект `~/app` (app + db) |
 
 Откат: ВМ выключена — `qemu-img snapshot -a <имя> devops-vm.qcow2`; ВМ работает — `loadvm <имя>` в мониторе.
-
-## 8. Локальное имя и разрешение имён
-
-* Хост: `/etc/hosts` ← `192.168.56.101    devops.local` (`infra/devops-vm/client/hosts.fragment`).
-* Гость: `hostnamectl set-hostname devops-vm`; в `/etc/hosts` строка `127.0.1.1 devops-vm.devops.local devops-vm` (в cloud-образе её нет — добавить, `setup/04-hostname.sh`); `hostname -f` → `devops-vm.devops.local`.
-* Порядок: `nsswitch.conf: hosts: files dns` → `/etc/hosts` → systemd-resolved (127.0.0.53, кэш) → DNS 10.0.2.3 (DHCP NAT).
-
-## 9. Контроль
-
-`bash scripts/audit.sh` на ВМ: код 0 — конфигурация корректна, 1 — есть нарушения.
 
 ## 8. Веб-сервер
 
@@ -130,3 +128,59 @@ sudo chmod 600 /etc/ssl/private/devops.key
 ./scripts/deploy.sh --dry-run
 ./scripts/deploy.sh
 ```
+
+## 9. Контейнеризация
+
+### 9.1. Docker Engine
+
+* Установка: официальный репозиторий Docker (`/etc/apt/sources.list.d/docker.list` → `https://download.docker.com/linux/ubuntu noble stable`, ключ `/etc/apt/keyrings/docker.asc`); пакет `docker.io` дистрибутива не используется.
+* Пакеты: `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`. Версии: Docker Engine 29.9.2, Docker Compose v5.6.0.
+* Служба: `systemctl enable --now docker` (`systemctl is-active docker` → `active`).
+* Группа `docker`: только `devops` (`sudo usermod -aG docker devops`, затем новая SSH-сессия). Участник группы фактически имеет права root — добавлять только учётные записи, которым уже выдан sudo.
+
+### 9.2. Проект приложения
+
+* Исходный код: каталог `app/` репозитория (`Dockerfile`, `.dockerignore`, `app.py`, `requirements.txt`, `docker-compose.yml`, `.env.example`).
+* Расположение на сервере: `/home/devops/app` (`~/app`), доставка с хоста:
+  `rsync -avz --delete --exclude=.env app/ devops:app/` (сначала с `--dry-run`).
+* Образ: `devops-app:1.0` (база `python:3.12-slim`, процесс от системного пользователя `app`, gunicorn на `0.0.0.0:5000` внутри контейнера).
+* Запуск: `cd ~/app && docker compose up -d --build`; состояние: `docker compose ps` (у `db` — `healthy`).
+
+### 9.3. Секреты
+
+* Файл `/home/devops/app/.env`, владелец `devops`, права `600`; создаётся только на сервере:
+  `cp .env.example .env && chmod 600 .env && sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 16)/" .env`.
+* `.env` исключён из репозитория (`.gitignore`), из контекста сборки (`.dockerignore`) и из доставки (`rsync --exclude=.env`). На хост не копируется.
+
+### 9.4. Сеть, порты, тома
+
+| Сервис | Образ | Публикация | Сеть |
+|---|---|---|---|
+| `app` | `devops-app:1.0` | `127.0.0.1:5000:5000` (только для Nginx на той же машине) | `app_backend` |
+| `db` | `postgres:16-alpine` | не публикуется (5432 доступен только в сети проекта) | `app_backend` |
+
+* Сеть проекта: `app_backend` (bridge, встроенный DNS: приложение обращается к СУБД по имени `db`, `DB_HOST=db`).
+* Именованный том: `app_db_data` → `/var/lib/postgresql/data`. `docker compose down` том сохраняет; `docker compose down -v` удаляет данные безвозвратно.
+* Опубликованные на `0.0.0.0` порты Docker обходят UFW (цепочки iptables `DOCKER`), поэтому порт приложения публикуется только на `127.0.0.1`.
+
+### 9.5. Обратный прокси-сервер
+
+В HTTPS-блок `/etc/nginx/sites-available/devops-site` (эталон: `infra/devops-vm/nginx/devops-site`) добавлено:
+
+```nginx
+location /app/ {
+    proxy_pass http://127.0.0.1:5000/;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+* Проверка: `curl --cacert ~/devops.crt https://devops.local/app/` (счётчик), `.../app/health` → `ok`; статический ресурс `https://devops.local/` сохранён (200).
+* Отказ контейнера приложения → `502 Bad Gateway`, в `devops-site.error.log`: `connect() failed (111: Connection refused) while connecting to upstream`.
+* Снимок ВМ после настройки: `05-docker-compose`.
+
+## 10. Контроль
+
+`bash scripts/audit.sh` на ВМ (от имени devops): код 0 — конфигурация корректна, 1 — есть нарушения. Разделы: [1] SSH, [2] UFW, [3] учётные записи, [4] веб-сервер, [5] контейнеризация.
