@@ -43,7 +43,7 @@ if systemctl is-active --quiet nginx; then
 else
   check "nginx активен" "active" "inactive"
 fi
-if nginx -t >/dev/null 2>&1; then
+if sudo nginx -t >/dev/null 2>&1; then
   check "nginx -t успешен" "ok" "ok"
 else
   check "nginx -t успешен" "ok" "fail"
@@ -54,7 +54,7 @@ else
   check "сертификат devops.crt ≥30 дней" "ok" "fail"
 fi
 WW=$(find /var/www/devops-site -perm -o+w 2>/dev/null | head -1 || true)
-KEYMODE=$(stat -c '%a' /etc/ssl/private/devops.key 2>/dev/null || echo missing)
+KEYMODE=$(sudo stat -c '%a' /etc/ssl/private/devops.key 2>/dev/null || echo missing)
 if [[ -z "$WW" && "$KEYMODE" == "600" ]]; then
   check "нет o+w в сайте и ключ 600" "ok" "ok"
 else
