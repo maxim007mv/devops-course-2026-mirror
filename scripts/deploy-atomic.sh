@@ -2,7 +2,7 @@
 # Опциональный атомарный деплой (раздел 6): releases/<ts>, ln -s + mv -T current.
 set -euo pipefail
 REMOTE="${REMOTE:-devops}"
-BASE="${BASE:-/var/www/releases}"
+BASE="${BASE:-/var/www}"
 REMOTE_DIR="${REMOTE_DIR:-/var/www/devops-site}"
 SITE_URL="${SITE_URL:-https://devops.local}"
 CA_CERT="${CA_CERT:-${HOME}/devops.crt}"
