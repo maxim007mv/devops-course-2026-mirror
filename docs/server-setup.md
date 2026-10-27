@@ -26,7 +26,7 @@
 
 ### 2.1. Локальное имя и разрешение имён
 
-* Хост: `/etc/hosts` ← `192.168.56.101    devops.local` (`infra/devops-vm/client/hosts.fragment`).
+* Хост: `/etc/hosts` ← `192.168.56.101    devops.local` и `192.168.56.101    api.devops.local` (КР №2) (`infra/devops-vm/client/hosts.fragment`).
 * Гость: `hostnamectl set-hostname devops-vm`; в `/etc/hosts` строка `127.0.1.1 devops-vm.devops.local devops-vm` (в cloud-образе её нет — добавить, `setup/04-hostname.sh`); `hostname -f` → `devops-vm.devops.local`.
 * Порядок: `nsswitch.conf: hosts: files dns` → `/etc/hosts` → systemd-resolved (127.0.0.53, кэш) → DNS 10.0.2.3 (DHCP NAT).
 
@@ -84,10 +84,12 @@ QEMU: `-netdev user,id=nat,hostfwd=tcp:127.0.0.1:2222-:2222`. Изменение
 | Наименование | Момент создания (MSK) | Состояние |
 |---|---|---|
 | `01-clean-install` | 14.10.2026 08:19 | после `apt upgrade`, ВМ выключена (`qemu-img snapshot -c`) |
-| `02-keys-configured` | 21.10.2026 07:18 | пользователь devops, ключ, `~/.ssh/config` (живой снимок `savevm`, с ОЗУ; пересоздан после восстановления с 01) |
-| `03-ssh-hardened` | 21.10.2026 07:18 | SSH на 2222, UFW, FQDN (живой снимок `savevm`) |
-| `04-nginx-https` | 21.10.2026 07:26 | ПР6: Nginx, TLS, редирект 301 |
-| `05-docker-compose` | 21.10.2026 09:58 | ПР7: Docker Engine, проект `~/app` (app + db) |
+| `02-keys-configured` | 27.10.2026 22:09 | пользователь devops, ключ, `~/.ssh/config` (живой снимок `savevm`; пересоздан при восстановлении стенда 27.10) |
+| `03-ssh-hardened` | 27.10.2026 22:09 | SSH на 2222, UFW, FQDN (живой снимок `savevm`) |
+| `04-nginx-https` | 27.10.2026 22:11 | ПР6: Nginx, TLS, редирект 301 |
+| `05-docker-compose` | 27.10.2026 22:17 | ПР7: Docker Engine, проект `~/app` (app + db) |
+| `06-before-kr2` | 27.10.2026 22:20 | перед КР №2 (правила UFW сохранены в `~/ufw-before-kr2.txt`) |
+| `07-kr2` | 27.10.2026 22:32 | КР №2: проект `~/kr2` (app + redis), ресурс `https://api.devops.local` |
 
 Откат: ВМ выключена — `qemu-img snapshot -a <имя> devops-vm.qcow2`; ВМ работает — `loadvm <имя>` в мониторе.
 
@@ -183,4 +185,46 @@ location /app/ {
 
 ## 10. Контроль
 
-`bash scripts/audit.sh` на ВМ (от имени devops): код 0 — конфигурация корректна, 1 — есть нарушения. Разделы: [1] SSH, [2] UFW, [3] учётные записи, [4] веб-сервер, [5] контейнеризация.
+`(cd ~/devops-course-2026 && scripts/audit.sh); echo $?` на ВМ (от имени devops, копия репозитория доставляется `rsync -avz --delete --exclude=.git ./ devops:devops-course-2026/`): код 0 — конфигурация корректна, 1 — есть нарушения. Разделы: [1] SSH, [2] UFW, [3] учётные записи, [4] веб-сервер, [5] контейнеризация, [6] контрольная работа №2.
+
+## 11. Контрольная работа №2 (вариант 1)
+
+Исходный код — отдельный репозиторий `devops-kr2` (шаблон `kr2-template`, ветка `kr2/variant-1`), на сервере — `/home/devops/kr2` (`~/kr2`).
+
+| Параметр | Значение |
+|---|---|
+| Доменное имя | `api.devops.local` (запись в `/etc/hosts` хоста) |
+| Сервис `app` | образ `kr2-app:1.0` (база `python:3.12-slim`, пользователь `app`, UID 10001, gunicorn `0.0.0.0:8001` в exec-форме) |
+| Публикация | `127.0.0.1:8001:8001`; порт Redis 6379 не публикуется |
+| Сервис `redis` | `redis:7-alpine`, `--appendonly yes --requirepass`, проверка готовности `redis-cli ping`, процесс от пользователя `redis` |
+| Сеть / том | `kr2_backend` (встроенный DNS, `REDIS_HOST=redis`), `kr2_redis_data` → `/data` |
+| Секрет | `~/kr2/.env` (600, devops), `REDIS_PASSWORD` — `openssl rand -hex 16`, создаётся только на сервере; доставка `rsync --exclude=.env` |
+| Перезапуск | `restart: unless-stopped` у обоих сервисов |
+
+### 11.1. TLS и Nginx
+
+```bash
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/kr2.key -out /etc/ssl/certs/kr2.crt \
+  -subj "/CN=api.devops.local" -addext "subjectAltName=DNS:api.devops.local" \
+  -addext "basicConstraints=critical,CA:FALSE" \
+  -addext "keyUsage=digitalSignature,keyEncipherment" -addext "extendedKeyUsage=serverAuth"
+sudo chmod 600 /etc/ssl/private/kr2.key
+sudo install -m 644 ~/kr2/nginx/kr2 /etc/nginx/sites-available/kr2
+sudo ln -s /etc/nginx/sites-available/kr2 /etc/nginx/sites-enabled/kr2
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+* Конфигурация: `/etc/nginx/sites-available/kr2` (эталон — `infra/devops-vm/nginx/kr2`), `devops-site` не изменялся (контроль `sha256sum`).
+* Порт 80 → `301 https://$host$request_uri`; порт 443 → `proxy_pass http://127.0.0.1:8001` с заголовками `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`.
+* Журналы: `/var/log/nginx/kr2.access.log`, `/var/log/nginx/kr2.error.log`.
+* Правила UFW не изменялись: `diff <(sudo ufw status numbered) ~/ufw-before-kr2.txt`.
+
+### 11.2. Диагностика
+
+| Симптом на хосте | Звено | Подтверждение |
+|---|---|---|
+| `502 Bad Gateway` | контейнер приложения | `kr2.error.log`: `connect() failed (111: Connection refused) while connecting to upstream` |
+| `500` на `/`, `/health` = 200 | Redis | `docker compose ps -a` (redis `Exited`), `docker compose logs app`: `redis.exceptions.ConnectionError` |
+| ошибка сертификата `curl (60)` | TLS / выбор `server` | `openssl s_client -servername ... \| openssl x509 -noout -subject -ext subjectAltName` |
+| таймаут соединения | межсетевой экран / Nginx | `sudo ufw status numbered`, `systemctl status nginx` |
