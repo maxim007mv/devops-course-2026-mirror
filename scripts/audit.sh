@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Аудит базовой конфигурации сервера devops-vm (ПР №5–7).
+# Аудит базовой конфигурации сервера devops-vm (ПР №5–7, КР №2).
 # Код возврата: 0 — все проверки пройдены, 1 — есть нарушения (пригодно для CI, ПР №10).
 set -uo pipefail
 
@@ -71,6 +71,26 @@ check "СУБД app-db-1 в состоянии healthy" "healthy" \
 EXPOSED="$(ss -tlnH | awk '{print $4}' | grep -E ':(5000|5432)$' | grep -v '^127\.0\.0\.1:' | sort -u | paste -sd, -)"
 check "Порты 5000/5432 только на 127.0.0.1" "none" "${EXPOSED:-none}"
 check "Права файла $APP_DIR/.env равны 600" "600" "$(stat -c '%a' "$APP_DIR/.env" 2>/dev/null || echo missing)"
+
+# [6] Контрольная работа № 2
+echo "[6] Контрольная работа № 2"
+KR2_DIR="${KR2_DIR:-$HOME/kr2}"
+KR2_PORT="${KR2_PORT:-8001}"
+# контейнер определяется по имени сервиса, а не по имени, сформированному Compose
+KR2_REDIS_ID="$(docker compose --project-directory "$KR2_DIR" ps -q redis 2>/dev/null)"
+check "Redis (сервис redis) в состоянии healthy" "healthy" \
+      "$([[ -n "$KR2_REDIS_ID" ]] && docker inspect -f '{{.State.Health.Status}}' "$KR2_REDIS_ID" 2>/dev/null || echo absent)"
+KR2_PUB="$(docker compose --project-directory "$KR2_DIR" port app "$KR2_PORT" 2>/dev/null | sort -u | paste -sd, -)"
+check "Порт $KR2_PORT опубликован только на 127.0.0.1" "127.0.0.1:$KR2_PORT" "${KR2_PUB:-none}"
+check "Права файла $KR2_DIR/.env равны 600" "600" "$(stat -c '%a' "$KR2_DIR/.env" 2>/dev/null || echo missing)"
+if openssl x509 -in /etc/ssl/certs/kr2.crt -noout -checkend $((30*86400)) >/dev/null 2>&1; then
+  KR2_CERT=ok
+else
+  KR2_CERT=fail
+fi
+check "Сертификат kr2.crt действителен не менее 30 дней" "ok" "$KR2_CERT"
+check "Ресурс kr2 активирован (sites-enabled)" "/etc/nginx/sites-available/kr2" \
+      "$(readlink -f /etc/nginx/sites-enabled/kr2 2>/dev/null || echo missing)"
 
 echo "Пройдено: $PASS, не пройдено: $FAIL"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1
