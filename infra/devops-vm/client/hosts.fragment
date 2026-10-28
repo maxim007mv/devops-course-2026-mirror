@@ -1,0 +1,2 @@
+# /etc/hosts (или C:\Windows\System32\drivers\etc\hosts) хостовой системы
+192.168.56.101    devops.local
