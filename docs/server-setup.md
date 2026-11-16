@@ -228,3 +228,21 @@ sudo nginx -t && sudo systemctl reload nginx
 | `500` на `/`, `/health` = 200 | Redis | `docker compose ps -a` (redis `Exited`), `docker compose logs app`: `redis.exceptions.ConnectionError` |
 | ошибка сертификата `curl (60)` | TLS / выбор `server` | `openssl s_client -servername ... \| openssl x509 -noout -subject -ext subjectAltName` |
 | таймаут соединения | межсетевой экран / Nginx | `sudo ufw status numbered`, `systemctl status nginx` |
+
+## 12. Ansible
+
+Раздел соответствует разделу «10. Ansible» методички ПР № 11 (номера 10–11 в документе уже заняты).
+
+- Расположение проекта: каталог `ansible/` репозитория, запуск из этого каталога (`ansible.cfg` выбирает `inventory/prod.ini`).
+- Управляющий узел: хостовая система lomakin-pc (Linux, ansible-core 2.19, коллекции из `ansible/requirements.yml`).
+- Управляемый узел: devops-vm, Ubuntu Server 24.04, восстановлена из снимка 01-clean-install, адрес Host-only 192.168.56.101, SSH на порту 22.
+- Inventory: `inventory/bootstrap.ini` — первичный запуск от student по паролю (`--ask-pass --ask-become-pass`); `inventory/prod.ini` — последующие запуски от devops по ключу `~/.ssh/devops_vm` без интерактивного ввода.
+- Роли: base — проверка ОС, базовые пакеты, официальный репозиторий Docker и служба Docker; ssh — пользователь devops, ключ, sudo, hardening SSH, UFW (22, 80); nginx — reverse proxy на 127.0.0.1:5000, отключение default site, проверка `nginx -t` перед reload; app — загрузка образа, контейнер, проверка /health.
+- Образ GHCR: `ghcr.io/maxim007mv/devops-ci-app`, тег — полный SHA `55c59beaec4c1eebdf8e47d2c642dbe0aca7ee9d` (переменная `app_tag` в `group_vars/all.yml`, тег latest не используется).
+- Порт контейнера: 5000, опубликован только на 127.0.0.1:5000; снаружи доступен только Nginx на порту 80.
+- Health endpoint: `http://192.168.56.101/health` (через Nginx) и `http://127.0.0.1:5000/health` (на VM).
+- Первичный запуск: `ansible-playbook -i inventory/bootstrap.ini site.yml --ask-pass --ask-become-pass`.
+- Повторный запуск: `ansible-playbook site.yml` (ожидается changed=0, failed=0).
+- Read-only аудит: `ansible-playbook verify.yml`.
+
+Пароли и закрытый ключ в документ и репозиторий не включаются.
