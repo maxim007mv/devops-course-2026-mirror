@@ -1,0 +1,12 @@
+#cloud-config
+hostname: devops-vm
+manage_etc_hosts: false
+users:
+  - name: student
+    gecos: student
+    shell: /bin/bash
+    groups: [adm, sudo]
+    lock_passwd: false
+    passwd: "<SHA-512 hash from: openssl passwd -6>"
+ssh_pwauth: true
+package_update: false

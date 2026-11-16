@@ -1,0 +1,6 @@
+---
+app_image: "ghcr.io/maxim007mv/devops-ci-app"
+app_tag: "55c59beaec4c1eebdf8e47d2c642dbe0aca7ee9d"
+app_container_name: "devops-ci-app"
+app_host_port: 5000
+app_internal_port: 5000
